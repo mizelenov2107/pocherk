@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+/*
+  Дизайн-код «Абажур». Полотно текста под одной тёплой лампой: карточек нет, иерархию держат
+  кегль, воздух и тонкие линии.
+
+  Два правила, которые нельзя нарушать при добавлении цветов.
+  Первое: в основном потоке нет ни чистого белого, ни нейтрально-серого, вся лестница стоит
+  на hue 32–38°. Второе: тёмная тема описывается двумя отдельными правилами, потому что
+  селектор и медиазапрос в одном правиле CSS не соединяются и парсер выбрасывает такой блок
+  целиком, а тема молча пропадает.
+*/
+
+:root {
+  color-scheme: light;
+
+  /* поверхности */
+  --bg: #faf6ef;
+  --surface: #fffcf6;
+  --surface-raised: #ffffff;
+  --border: #e7dccb;
+  --border-strong: #d3c4ad;
+
+  /* текст */
+  --text: #2b2621;
+  --text-secondary: #5b5147;
+  --text-muted: #8b8074;
+
+  /* акцент. Контраст 3.9:1, поэтому акцент несёт подчёркивание и рамку, но не текст ссылки */
+  --accent: #b4762b;
+  --accent-hover: #96601f;
+  --accent-bg: #f6e8d2;
+
+  /* статусы */
+  --success: #4e7a45;
+  --warning: #a8770f;
+  --error: #a63a2c;
+
+  /* источники материала: по этим цветам у каждого куска заметки видно, откуда он взялся */
+  --src-audio: #9e4a38;
+  --src-hand: #6c7a45;
+  --src-slide: #2f6f80;
+  --src-book: #7c4f73;
+
+  /* форма */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  --shadow-1: 0 1px 2px rgba(58, 42, 24, 0.05);
+  --shadow-2: 0 2px 6px rgba(58, 42, 24, 0.06), 0 1px 2px rgba(58, 42, 24, 0.04);
+  --shadow-3: 0 8px 24px rgba(58, 42, 24, 0.08);
+  --shadow-lamp: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 12px 40px rgba(180, 118, 43, 0.1);
+
+  /* ритм */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+  --sp-9: 96px;
+
+  --row-h: 52px;
+  --btn-h: 44px;
+  --input-h: 48px;
+
+  /* полотно: 68–74 знака в строке, мера Obsidian Publish */
+  --canvas-w: 704px;
+
+  --grain-opacity: 0.035;
+  --grain-blend: soft-light;
+  --lamp: radial-gradient(900px 600px at 12% 0%, rgba(180, 118, 43, 0.07), transparent 70%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #16130f;
+  --surface: #1d1915;
+  --surface-raised: #251f1a;
+  --border: #382f26;
+  --border-strong: #4b4034;
+
+  --text: #efe7d9;
+  --text-secondary: #bbae9c;
+  --text-muted: #8b7f6f;
+
+  --accent: #e0a45c;
+  --accent-hover: #f0ba79;
+  --accent-bg: #3b2c19;
+
+  --success: #7fb36a;
+  --warning: #dcae4e;
+  --error: #e0785f;
+
+  --src-audio: #de8267;
+  --src-hand: #a3b473;
+  --src-slide: #6fafc0;
+  --src-book: #c08bb4;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-lamp: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 44px rgba(224, 164, 92, 0.14);
+
+  --grain-opacity: 0.055;
+  --lamp: radial-gradient(900px 600px at 12% 0%, rgba(224, 164, 92, 0.1), transparent 70%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #16130f;
+    --surface: #1d1915;
+    --surface-raised: #251f1a;
+    --border: #382f26;
+    --border-strong: #4b4034;
+
+    --text: #efe7d9;
+    --text-secondary: #bbae9c;
+    --text-muted: #8b7f6f;
+
+    --accent: #e0a45c;
+    --accent-hover: #f0ba79;
+    --accent-bg: #3b2c19;
+
+    --success: #7fb36a;
+    --warning: #dcae4e;
+    --error: #e0785f;
+
+    --src-audio: #de8267;
+    --src-hand: #a3b473;
+    --src-slide: #6fafc0;
+    --src-book: #c08bb4;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.5);
+    --shadow-lamp: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 44px rgba(224, 164, 92, 0.14);
+
+    --grain-opacity: 0.055;
+    --lamp: radial-gradient(900px 600px at 12% 0%, rgba(224, 164, 92, 0.1), transparent 70%);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-bg: var(--accent-bg);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-src-audio: var(--src-audio);
+  --color-src-hand: var(--src-hand);
+  --color-src-slide: var(--src-slide);
+  --color-src-book: var(--src-book);
+
+  --font-head: var(--font-literata), Georgia, serif;
+  --font-body: var(--font-golos), system-ui, sans-serif;
+  --font-mono: var(--font-pt-mono), ui-monospace, monospace;
+  --font-hand: var(--font-caveat), cursive;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-golos), system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 30px;
+  letter-spacing: -0.003em;
+}
+
+/* Свет лампы садится в левый верхний угол и к краям гаснет */
+.lamp {
+  background-image: var(--lamp);
+}
+
+/*
+  Плёночное зерно поверх всего, включая фотографии конспектов. Это не текстура бумаги:
+  имитация тетради забракована как дешёвый приём.
+*/
+.grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

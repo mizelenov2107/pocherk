@@ -1,0 +1,577 @@
+// Схема «Почерк».
+//
+// Главный принцип: истина это структура, markdown это её рендер. Без блоков не собрать ни
+// провенанс, ни осмысленный дифф, ни машинную приёмку.
+//
+// Контур персональных данных проходит по таблицам. User, Session, Subscription, QuotaEntry
+// и всё, что их касается, границу РФ не пересекают. К модели уходят фрагменты и изображения
+// страниц, обезличенно: вместо userId эфемерный jobRef.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Учётка, подписка, квота
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  emailIsValid Boolean  @default(false)
+  passwordHash String
+  displayName  String?
+  telegramId   BigInt?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions      Session[]
+  subscription  Subscription?
+  quotaEntries  QuotaEntry[]
+  courses       Course[]
+  handwriting   HandwritingProfile?
+  corrections   Correction[]
+
+  @@index([createdAt])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+enum Plan {
+  TRIAL
+  START
+  STANDARD
+  SESSION
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  plan      Plan     @default(TRIAL)
+  periodAt  DateTime @default(now())
+  periodEnd DateTime
+
+  // Квота считается в минутах и страницах, а не в «лекциях»: лекция бывает и на 40 минут,
+  // и на три часа, а платим мы за минуты.
+  audioMinutesLeft Int
+  handPagesLeft    Int
+  pdfPagesLeft     Int
+  rebuildsLeft     Int
+
+  externalId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum QuotaKind {
+  AUDIO_MINUTE
+  HAND_PAGE
+  PDF_PAGE
+  PDF_SCAN_PAGE
+  REBUILD
+}
+
+// Один и тот же журнал служит двум целям: списывает квоту у пользователя и копит
+// себестоимость по поставщикам. Без второй половины верхней границы расходов не существует.
+model QuotaEntry {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      QuotaKind
+  amount    Int
+  costRub   Decimal   @db.Decimal(12, 4)
+  vendor    String
+  jobId     String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job  Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([vendor, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Курс и источники
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Course {
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  discipline String?
+
+  // Сквозной набор примеров дисциплины из доктрины: одна и та же функция, встреченная в
+  // пятом определении подряд, работает лучше пяти разных.
+  exampleSet Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sources Source[]
+  topics  Topic[]
+  notes   Note[]
+  terms   Term[]
+
+  @@unique([userId, title])
+}
+
+enum SourceKind {
+  AUDIO
+  HANDWRITING
+  SLIDES
+  PDF
+}
+
+model Source {
+  id       String     @id @default(cuid())
+  courseId String
+  kind     SourceKind
+  title    String
+
+  // Приоритет источника из доктрины: слайды 1, рукопись и доска 2, аудио 3.
+  // При расхождении выигрывает меньшее число.
+  authority Int
+
+  lessonNo   Int?
+  lessonDate DateTime?
+  durationMs Int?
+  pageCount  Int?
+
+  createdAt DateTime @default(now())
+
+  course    Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  assets    Asset[]
+  jobs      Job[]
+  fragments Fragment[]
+
+  @@index([courseId, kind])
+}
+
+model Asset {
+  id        String   @id @default(cuid())
+  sourceId  String
+  role      String
+  objectKey String   @unique
+  mimeType  String
+  bytes     BigInt
+  sha256    String
+  pageNo    Int?
+  createdAt DateTime @default(now())
+  expiresAt DateTime?
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([sha256])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Задачи
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum JobStage {
+  TRANSCODE
+  VAD
+  TRANSCRIBE
+  OCR
+  EXTRACT
+  SEGMENT
+  FORMULA
+  EMBED
+  BUILD_NOTE
+  ACCEPT
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+model Job {
+  id       String    @id @default(cuid())
+  sourceId String
+  stage    JobStage
+  status   JobStatus @default(QUEUED)
+
+  // Идентификатор операции у поставщика. Нужен, чтобы повтор задачи не оплачивался дважды.
+  vendorOpId String?
+
+  tokensIn        Int?
+  tokensOut       Int?
+  tokensCacheRead Int?
+  costRub         Decimal? @db.Decimal(12, 4)
+
+  error      String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  source       Source       @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  quotaEntries QuotaEntry[]
+
+  @@unique([sourceId, stage])
+  @@index([status, stage])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Фрагменты и карта тем
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Единица провенанса. Абзац заметки без ссылки хотя бы на один фрагмент приёмку не проходит.
+model Fragment {
+  id       String @id @default(cuid())
+  sourceId String
+
+  // Короткий идентификатор для промпта, вида frg_7. Модель цитирует именно его: cuid дороже
+  // в токенах и легче портится опечаткой.
+  shortRef String
+
+  text String
+
+  // Локатор внутри источника: таймкоды для аудио, страница и рамка для страницы.
+  startMs Int?
+  endMs   Int?
+  pageNo  Int?
+  bbox    Json?
+
+  speaker    String?
+  confidence Float?
+
+  tsv       Unsupported("tsvector")?
+  embedding Unsupported("halfvec(768)")?
+
+  createdAt DateTime @default(now())
+
+  source    Source         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  topics    FragmentTopic[]
+  citations BlockCitation[]
+
+  @@unique([sourceId, shortRef])
+  @@index([sourceId, startMs])
+  @@index([sourceId, pageNo])
+}
+
+model Topic {
+  id       String  @id @default(cuid())
+  courseId String
+  title    String
+  aliases  String[]
+  parentId String?
+
+  embedding Unsupported("halfvec(768)")?
+
+  createdAt DateTime @default(now())
+
+  course    Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  parent    Topic?          @relation("TopicTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Topic[]         @relation("TopicTree")
+  fragments FragmentTopic[]
+  from      TopicRelation[] @relation("RelFrom")
+  to        TopicRelation[] @relation("RelTo")
+  notes     Note[]
+
+  @@unique([courseId, title])
+}
+
+enum TopicRelationKind {
+  PREREQ
+  RELATED
+  CONTRAST
+}
+
+model TopicRelation {
+  id     String            @id @default(cuid())
+  fromId String
+  toId   String
+  kind   TopicRelationKind
+
+  from Topic @relation("RelFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  to   Topic @relation("RelTo", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId, kind])
+}
+
+// Сшивка источников. Три фрагмента из записи, из тетради и со слайда получают строки на один
+// topicId, и это единственное место, где разные источники встречаются на одной теме.
+model FragmentTopic {
+  fragmentId String
+  topicId    String
+  weight     Float  @default(1)
+
+  fragment Fragment @relation(fields: [fragmentId], references: [id], onDelete: Cascade)
+  topic    Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([fragmentId, topicId])
+  @@index([topicId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Заметка
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Note {
+  id              String  @id @default(cuid())
+  courseId        String
+  topicId         String?
+  title           String
+  normalizedTitle String
+
+  // Различитель для одноимённых заметок разных курсов и разделов: без него вики-ссылка
+  // однажды приведёт не туда.
+  disambiguator String?
+
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  course         Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topic          Topic?        @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  versions       NoteVersion[] @relation("NoteVersions")
+  currentVersion NoteVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  linksOut       NoteLink[]    @relation("LinkFrom")
+  linksIn        NoteLink[]    @relation("LinkTo")
+
+  @@unique([courseId, normalizedTitle])
+}
+
+enum VersionReason {
+  BUILD
+  REBUILD
+  USER_EDIT
+  ROLLBACK
+}
+
+model NoteVersion {
+  id     String        @id @default(cuid())
+  noteId String
+  n      Int
+  reason VersionReason
+
+  markdown String
+
+  // Сводка приёмки: какие слои прошли, какие нет и что помечено честной пометкой.
+  acceptance Json?
+
+  acceptedAt DateTime?
+  rejectedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  note      Note        @relation("NoteVersions", fields: [noteId], references: [id], onDelete: Cascade)
+  currentOf Note?       @relation("CurrentVersion")
+  blocks    NoteBlock[]
+  checks    NoteCheck[]
+
+  @@unique([noteId, n])
+}
+
+enum BlockRole {
+  HEADING
+  PARA
+  DEFINITION
+  OTHER_WORDS
+  FORMULA
+  LIST
+  IMAGE
+  QUESTION
+  ORG
+  SERVICE
+  GLOSSARY
+}
+
+model NoteBlock {
+  id        String @id @default(cuid())
+  versionId String
+  ord       Int
+  role      BlockRole
+
+  // Переживает пересборку и держит дифф: по нему блоки сопоставляются между версиями.
+  stableKey String
+
+  markdown String
+
+  // Восстановлено по речи, потому что ни в рукописи, ни на слайде этого нет. Такой блок
+  // помечается в самой заметке, а не молча выдаётся за сверенный.
+  restored Boolean @default(false)
+
+  version   NoteVersion     @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  citations BlockCitation[]
+
+  @@unique([versionId, stableKey])
+  @@index([versionId, ord])
+}
+
+enum CitationKind {
+  SUPPORTS
+  CONTRADICTS
+  RESTORED_FROM
+}
+
+model BlockCitation {
+  id         String       @id @default(cuid())
+  blockId    String
+  fragmentId String
+  kind       CitationKind @default(SUPPORTS)
+  quote      String?
+
+  block    NoteBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  fragment Fragment  @relation(fields: [fragmentId], references: [id], onDelete: Cascade)
+
+  @@unique([blockId, fragmentId, kind])
+  @@index([fragmentId])
+}
+
+enum CheckStatus {
+  PASS
+  WARN
+  FAIL
+}
+
+model NoteCheck {
+  id        String      @id @default(cuid())
+  versionId String
+  layer     Int
+  name      String
+  status    CheckStatus
+  detail    Json?
+  createdAt DateTime    @default(now())
+
+  version NoteVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId, layer])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Глоссарий и вики-ссылки
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Term {
+  id         String   @id @default(cuid())
+  courseId   String
+  title      String
+  aliases    String[]
+  notation   String?
+  definition String
+
+  // Порядок как на занятии, а не по алфавиту: так глоссарий читается как повторение хода
+  // занятия.
+  ord Int
+
+  course   Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  mentions TermMention[]
+
+  @@unique([courseId, title])
+}
+
+model TermMention {
+  id      String @id @default(cuid())
+  termId  String
+  blockId String
+
+  term Term @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  @@unique([termId, blockId])
+}
+
+enum LinkStatus {
+  RESOLVED
+  DANGLING
+  AMBIGUOUS
+}
+
+model NoteLink {
+  id         String     @id @default(cuid())
+  fromNoteId String
+  toNoteId   String?
+  rawTarget  String
+  status     LinkStatus @default(DANGLING)
+
+  from Note  @relation("LinkFrom", fields: [fromNoteId], references: [id], onDelete: Cascade)
+  to   Note? @relation("LinkTo", fields: [toNoteId], references: [id], onDelete: SetNull)
+
+  @@index([fromNoteId])
+  @@index([toNoteId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Почерк
+// ─────────────────────────────────────────────────────────────────────────────
+
+model HandwritingProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  // Версия ключа. Меняется при добавлении образца и честно сбрасывает кэш промпта: иначе
+  // модель получит старый ключ, а мы заплатим за новый.
+  keyVersion Int @default(1)
+
+  // Блоки 1 и 3 обязательны, блоки 2, 4 и 5 предлагаются вторым шагом.
+  blocksDone Int[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  samples HandwritingSample[]
+}
+
+model HandwritingSample {
+  id        String @id @default(cuid())
+  profileId String
+
+  // Форма образца это строка, а не страница: по опубликованным замерам оптимум приходится
+  // на пять-семь строчных кропов, а один образец хуже, чем ни одного.
+  objectKey String
+  truth     String
+  block     Int
+  ord       Int
+
+  createdAt DateTime @default(now())
+
+  profile HandwritingProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, ord])
+}
+
+// Правка пользователя над распознанной строкой. Копится и дописывается в ключ: это второй
+// источник образцов, и он бесплатный.
+model Correction {
+  id     String @id @default(cuid())
+  userId String
+
+  objectKey String
+  bbox      Json?
+  recognized String
+  corrected  String
+  usedInKey  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedInKey])
+}
